@@ -476,8 +476,6 @@ class CudaGraphRunner:
                     else reversed(self.capture_bs)
                 )
                 for i, bs in enumerate(capture_range):
-                    tic = time.perf_counter()
-                    
                     if get_tensor_model_parallel_rank() == 0:
                         avail_mem = get_available_gpu_memory(
                             self.model_runner.device,
@@ -488,10 +486,6 @@ class CudaGraphRunner:
                             f"Capturing batches ({bs=} {avail_mem=:.2f} GB)"
                         )
 
-                    compile_enabled = bs in self.compile_bs
-                    if compile_enabled:
-                        logger.debug(f"Capturing CUDA graph batch_size={bs} with torch.compile enabled")
-                    
                     with patch_model(
                         self.model_runner.model,
                         bs in self.compile_bs,
@@ -507,9 +501,6 @@ class CudaGraphRunner:
 
                     # Save gemlite cache after each capture
                     save_gemlite_cache()
-                    
-                    if compile_enabled:
-                        logger.debug(f"Captured CUDA graph batch_size={bs}, compile={compile_enabled}, elapsed={time.perf_counter() - tic:.2f} s")
 
         if self.enable_profile_cuda_graph:
             log_message = (

@@ -1655,7 +1655,7 @@ class ModelRunner:
             assert self.is_draft_worker
 
         logger.info(
-            f"Init memory pool end. elapsed={time.perf_counter() - tic:.2f} s, "
+            f"Memory pool end. elapsed={time.perf_counter() - tic:.2f} s, "
             f"avail mem={get_available_gpu_memory(self.device, self.gpu_id):.2f} GB"
         )
 
@@ -1671,12 +1671,12 @@ class ModelRunner:
     def init_attention_backend(self):
         """Init attention kernel backend."""
         tic = time.perf_counter()
-        logger.debug("Init attention backend begin.")
+        logger.info("Init attention backend begin.")
         if self.server_args.enable_two_batch_overlap and not self.is_draft_worker:
             self.attn_backend = TboAttnBackend.init_new(self._get_attention_backend)
         else:
             self.attn_backend = self._get_attention_backend()
-        logger.debug(f"Init attention backend end. elapsed={time.perf_counter() - tic:.2f} s")
+        logger.info(f"Init attention backend end. elapsed={time.perf_counter() - tic:.2f} s")
 
     def _get_attention_backend(self):
         """Init attention kernel backend."""

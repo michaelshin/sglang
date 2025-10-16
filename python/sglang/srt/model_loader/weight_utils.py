@@ -277,8 +277,8 @@ def download_weights_from_hf(
     # Use file lock to prevent multiple processes from
     # downloading the same model weights at the same time.
     with get_lock(model_name_or_path, cache_dir):
-        logger.debug(f"Downloading model weights from HuggingFace: {model_name_or_path}")
         tic = time.perf_counter()
+        logger.info(f"Downloading model weights from HuggingFace: {model_name_or_path}")
         hf_folder = snapshot_download(
             model_name_or_path,
             allow_patterns=allow_patterns,
@@ -288,7 +288,7 @@ def download_weights_from_hf(
             revision=revision,
             local_files_only=huggingface_hub.constants.HF_HUB_OFFLINE,
         )
-        logger.debug(f"Downloading model weights from HuggingFace complete. elapsed={time.perf_counter() - tic:.2f}s")
+        logger.info(f"Downloading model weights from HuggingFace complete. elapsed={time.perf_counter() - tic:.2f}s")
     return hf_folder
 
 
