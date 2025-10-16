@@ -965,9 +965,24 @@ def prepare_model_and_tokenizer(model_path: str, tokenizer_path: str):
         if not os.path.exists(model_path):
             from modelscope import snapshot_download
 
+            tic = time.time()
+            logger.info(
+                f"Downloading model from ModelScope: {model_path}"
+            )
             model_path = snapshot_download(model_path)
+            logger.info(
+                f"Model download complete. elapsed={time.time() - tic:.2f} s"
+            )
+            
+            tic = time.time()
+            logger.info(
+                f"Downloading tokenizer from ModelScope: {tokenizer_path}"
+            )
             tokenizer_path = snapshot_download(
                 tokenizer_path, ignore_patterns=["*.bin", "*.safetensors"]
+            )
+            logger.info(
+                f"Tokenizer download complete. elapsed={time.time() - tic:.2f} s"
             )
     return model_path, tokenizer_path
 

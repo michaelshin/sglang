@@ -603,7 +603,9 @@ class ModelRunner:
                 )
 
     def init_torch_distributed(self):
-        logger.info("Init torch distributed begin.")
+        tic = time.perf_counter()
+        before_avail_memory = get_available_gpu_memory(self.device, self.gpu_id)
+        logger.info(f"Init torch distributed begin. avail mem={before_avail_memory:.2f} GB")
 
         try:
             torch.get_device_module(self.device).set_device(self.gpu_id)
@@ -624,7 +626,6 @@ class ModelRunner:
         elif self.device == "npu":
             backend = "hccl"
 
-        before_avail_memory = get_available_gpu_memory(self.device, self.gpu_id)
         if not self.server_args.enable_p2p_check:
             monkey_patch_p2p_access_check()
 
@@ -700,11 +701,13 @@ class ModelRunner:
                     )
 
         logger.info(
-            f"Init torch distributed ends. mem usage={(before_avail_memory - local_gpu_memory):.2f} GB"
+            f"Init torch distributed ends. elapsed={time.perf_counter() - tic:.2f} s, "
+            f"mem usage={(before_avail_memory - local_gpu_memory):.2f} GB"
         )
         return min_per_gpu_memory
 
     def load_model(self):
+        tic_total = time.perf_counter()
         before_avail_memory = get_available_gpu_memory(self.device, self.gpu_id)
         logger.info(
             f"Load weight begin. avail mem={get_available_gpu_memory(self.device, self.gpu_id):.2f} GB"
@@ -726,6 +729,8 @@ class ModelRunner:
         set_cuda_arch()
 
         # Prepare the model config
+        tic = time.perf_counter()
+        logger.info("Preparing model load config begin.")
         self.load_config = LoadConfig(
             load_format=self.server_args.load_format,
             download_dir=self.server_args.download_dir,
@@ -737,6 +742,7 @@ class ModelRunner:
             )
         if self.server_args.load_format == "gguf":
             monkey_patch_vllm_gguf_config()
+        logger.info(f"Preparing model load config end. elapsed={time.perf_counter() - tic:.2f} s")
 
         if self.server_args.load_format == LoadFormat.REMOTE_INSTANCE:
             if self.tp_rank == 0:
@@ -754,6 +760,8 @@ class ModelRunner:
 
         # Load the model
         # Remove monkey_patch when linear.py quant remove dependencies with vllm
+        tic = time.perf_counter()
+        logger.info("Loading model weights begin.")
         monkey_patch_vllm_parallel_state()
         monkey_patch_isinstance_for_vllm_base_layer()
 
@@ -765,7 +773,10 @@ class ModelRunner:
             )
         monkey_patch_vllm_parallel_state(reverse=True)
         monkey_patch_isinstance_for_vllm_base_layer(reverse=True)
+        logger.info(f"Loading model weights end. elapsed={time.perf_counter() - tic:.2f} s")
 
+        tic = time.perf_counter()
+        logger.info("Post-loading operations begin.")
         get_offloader().post_init()
 
         if self.server_args.kv_cache_dtype == "fp8_e4m3":
@@ -802,11 +813,13 @@ class ModelRunner:
             )
 
         self.dtype = self.model_config.dtype
+        logger.info(f"Post-loading operations end. elapsed={time.perf_counter() - tic:.2f} s")
 
         after_avail_memory = get_available_gpu_memory(self.device, self.gpu_id)
         self.weight_load_mem_usage = before_avail_memory - after_avail_memory
         logger.info(
             f"Load weight end. "
+            f"elapsed={time.perf_counter() - tic_total:.2f} s, "
             f"type={type(self.model).__name__}, "
             f"dtype={self.dtype}, "
             f"avail mem={after_avail_memory:.2f} GB, "
@@ -1350,6 +1363,9 @@ class ModelRunner:
         max_num_reqs: Optional[int] = None,
         max_total_tokens: Optional[int] = None,
     ):
+        tic = time.perf_counter()
+        logger.info(f"Init memory pool begin. avail mem={get_available_gpu_memory(self.device, self.gpu_id):.2f} GB")
+        
         # Determine the kv cache dtype
         if self.server_args.kv_cache_dtype == "auto":
             self.kv_cache_dtype = self.dtype
@@ -1648,7 +1664,7 @@ class ModelRunner:
             assert self.is_draft_worker
 
         logger.info(
-            f"Memory pool end. "
+            f"Init memory pool end. elapsed={time.perf_counter() - tic:.2f} s, "
             f"avail mem={get_available_gpu_memory(self.device, self.gpu_id):.2f} GB"
         )
 
@@ -1663,10 +1679,13 @@ class ModelRunner:
 
     def init_attention_backend(self):
         """Init attention kernel backend."""
+        tic = time.perf_counter()
+        logger.info("Init attention backend begin.")
         if self.server_args.enable_two_batch_overlap and not self.is_draft_worker:
             self.attn_backend = TboAttnBackend.init_new(self._get_attention_backend)
         else:
             self.attn_backend = self._get_attention_backend()
+        logger.info(f"Init attention backend end. elapsed={time.perf_counter() - tic:.2f} s")
 
     def _get_attention_backend(self):
         """Init attention kernel backend."""

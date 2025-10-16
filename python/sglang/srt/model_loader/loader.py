@@ -329,6 +329,7 @@ class DefaultModelLoader(BaseModelLoader):
         """Prepare weights for the model.
 
         If the model is not local, it will be downloaded."""
+        tic = time.perf_counter()
         model_name_or_path = (
             self._maybe_download_from_modelscope(model_name_or_path, revision)
             or model_name_or_path
@@ -359,6 +360,7 @@ class DefaultModelLoader(BaseModelLoader):
             allow_patterns += ["*.pt"]
 
         if not is_local:
+            logger.info(f"Downloading model weights from HuggingFace: {model_name_or_path}")
             hf_folder = download_weights_from_hf(
                 model_name_or_path,
                 self.load_config.download_dir,
@@ -366,6 +368,7 @@ class DefaultModelLoader(BaseModelLoader):
                 revision,
                 ignore_patterns=self.load_config.ignore_patterns,
             )
+            logger.info(f"Model weights download complete. elapsed={time.perf_counter() - tic:.2f} s")
         else:
             hf_folder = model_name_or_path
 
@@ -480,6 +483,8 @@ class DefaultModelLoader(BaseModelLoader):
         model_config: ModelConfig,
         device_config: DeviceConfig,
     ) -> nn.Module:
+        tic = time.perf_counter()
+        logger.info("Initializing model architecture begin.")
         target_device = torch.device(device_config.device)
         with set_default_torch_dtype(model_config.dtype):
             with target_device:
@@ -487,17 +492,25 @@ class DefaultModelLoader(BaseModelLoader):
                     model_config,
                     self.load_config,
                 )
+        logger.info(f"Initializing model architecture end. elapsed={time.perf_counter() - tic:.2f} s")
 
+        tic = time.perf_counter()
+        logger.info("Loading weights into model begin.")
         self.load_weights_and_postprocess(
             model, self._get_all_weights(model_config, model), target_device
         )
+        logger.info(f"Loading weights into model end. elapsed={time.perf_counter() - tic:.2f} s")
 
         return model.eval()
 
     @staticmethod
     def load_weights_and_postprocess(model, weights, target_device):
+        tic = time.perf_counter()
         model.load_weights(weights)
+        logger.info(f"Weight loading into model complete. elapsed={time.perf_counter() - tic:.2f} s")
 
+        tic = time.perf_counter()
+        logger.info("Post-processing quantization weights begin.")
         for _, module in model.named_modules():
             quant_method = getattr(module, "quant_method", None)
             if quant_method is not None:
@@ -508,6 +521,7 @@ class DefaultModelLoader(BaseModelLoader):
                 # parameters onto device for processing and back off after.
                 with device_loading_context(module, target_device):
                     quant_method.process_weights_after_loading(module)
+        logger.info(f"Post-processing quantization weights end. elapsed={time.perf_counter() - tic:.2f} s")
 
 
 class LayeredModelLoader(DefaultModelLoader):
