@@ -495,22 +495,20 @@ class DefaultModelLoader(BaseModelLoader):
         logger.info(f"Initializing model architecture end. elapsed={time.perf_counter() - tic:.2f} s")
 
         tic = time.perf_counter()
-        logger.info("Loading weights into model begin.")
         self.load_weights_and_postprocess(
             model, self._get_all_weights(model_config, model), target_device
         )
-        logger.info(f"Loading weights into model end. elapsed={time.perf_counter() - tic:.2f} s")
 
         return model.eval()
 
     @staticmethod
     def load_weights_and_postprocess(model, weights, target_device):
         tic = time.perf_counter()
+        logger.info("Loading weights from disk begin.")
         model.load_weights(weights)
-        logger.info(f"Weight loading into model complete. elapsed={time.perf_counter() - tic:.2f} s")
+        logger.info(f"Loading weights from disk end. elapsed={time.perf_counter() - tic:.2f} s")
 
         tic = time.perf_counter()
-        logger.info("Post-processing quantization weights begin.")
         for _, module in model.named_modules():
             quant_method = getattr(module, "quant_method", None)
             if quant_method is not None:
