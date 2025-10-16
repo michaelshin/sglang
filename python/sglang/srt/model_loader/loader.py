@@ -329,7 +329,6 @@ class DefaultModelLoader(BaseModelLoader):
         """Prepare weights for the model.
 
         If the model is not local, it will be downloaded."""
-        tic = time.perf_counter()
         model_name_or_path = (
             self._maybe_download_from_modelscope(model_name_or_path, revision)
             or model_name_or_path
@@ -360,7 +359,6 @@ class DefaultModelLoader(BaseModelLoader):
             allow_patterns += ["*.pt"]
 
         if not is_local:
-            logger.info(f"Downloading model weights from HuggingFace: {model_name_or_path}")
             hf_folder = download_weights_from_hf(
                 model_name_or_path,
                 self.load_config.download_dir,
@@ -368,7 +366,6 @@ class DefaultModelLoader(BaseModelLoader):
                 revision,
                 ignore_patterns=self.load_config.ignore_patterns,
             )
-            logger.info(f"Model weights download complete. elapsed={time.perf_counter() - tic:.2f} s")
         else:
             hf_folder = model_name_or_path
 
@@ -494,7 +491,6 @@ class DefaultModelLoader(BaseModelLoader):
                 )
         logger.info(f"Initializing model architecture end. elapsed={time.perf_counter() - tic:.2f} s")
 
-        tic = time.perf_counter()
         self.load_weights_and_postprocess(
             model, self._get_all_weights(model_config, model), target_device
         )
@@ -504,9 +500,9 @@ class DefaultModelLoader(BaseModelLoader):
     @staticmethod
     def load_weights_and_postprocess(model, weights, target_device):
         tic = time.perf_counter()
-        logger.info("Loading weights from disk begin.")
+        logger.debug("Downloading weights and loading weights into device begin.")
         model.load_weights(weights)
-        logger.info(f"Loading weights from disk end. elapsed={time.perf_counter() - tic:.2f} s")
+        logger.debug(f"Downloading weights and loading weights into device end. elapsed={time.perf_counter() - tic:.2f} s")
 
         tic = time.perf_counter()
         for _, module in model.named_modules():
@@ -519,7 +515,7 @@ class DefaultModelLoader(BaseModelLoader):
                 # parameters onto device for processing and back off after.
                 with device_loading_context(module, target_device):
                     quant_method.process_weights_after_loading(module)
-        logger.info(f"Post-processing quantization weights end. elapsed={time.perf_counter() - tic:.2f} s")
+        logger.debug(f"Post-processing quantization weights end. elapsed={time.perf_counter() - tic:.2f} s")
 
 
 class LayeredModelLoader(DefaultModelLoader):
@@ -586,7 +582,9 @@ class LayeredModelLoader(DefaultModelLoader):
                     apply_torchao_config_to_model(module, torchao_config, None)
 
             # Start calling on root module
+            tic = time.perf_counter()
             fill_module(model, [], weights)
+            logger.debug(f"LayeredModelLoader complete: modules_loaded={module_count}, total_elapsed={time.perf_counter() - tic:.2f}s")
 
         if torchao_config:
             model.torchao_applied = True
@@ -634,7 +632,9 @@ class DummyModelLoader(BaseModelLoader):
 
             # NOTE(woosuk): For accurate performance evaluation, we assign
             # random values to the weights.
+            tic = time.perf_counter()
             initialize_dummy_weights(model)
+            logger.debug(f"DummyModelLoader: initialized dummy weights, elapsed={time.perf_counter() - tic:.2f}s")
 
             post_load_weights(model, model_config)
 
@@ -732,6 +732,8 @@ class ShardedStateLoader(BaseModelLoader):
             model_config.model_path, model_config.revision
         )
 
+        tic = time.perf_counter()
+        logger.debug(f"ShardedStateLoader: loading model weights from disk begin.")
         with set_default_torch_dtype(model_config.dtype):
             with torch.device(device_config.device):
                 model = _initialize_model(model_config, self.load_config)
@@ -779,6 +781,7 @@ class ShardedStateLoader(BaseModelLoader):
 
             post_load_weights(model, model_config)
 
+        logger.debug(f"ShardedStateLoader: model weights loaded, elapsed={time.perf_counter() - tic:.2f}s")
         return model.eval()
 
     @staticmethod
@@ -1202,8 +1205,10 @@ class BitsAndBytesModelLoader(BaseModelLoader):
             model_config.model_path, model_config.revision, pre_quant, load_8bit
         )
 
+        tic = time.perf_counter()
+        logger.debug(f"BitsAndBytesModelLoader: loading weights into device begin.")
         model.load_weights(qweight_iterator)
-
+        logger.debug(f"BitsAndBytesModelLoader: loading weights into device end. elapsed={time.perf_counter() - tic:.2f}s")
         torch.cuda.empty_cache()
 
         param_dict = dict(model.named_parameters())
@@ -1389,15 +1394,20 @@ class GGUFModelLoader(BaseModelLoader):
         with set_default_torch_dtype(model_config.dtype):
             with target_device:
                 model = _initialize_model(model_config, self.load_config)
+            tic = time.perf_counter()
+            logger.debug(f"GGUFModelLoader: loading weights into device begin.")
             model.load_weights(
                 self._get_weights_iterator(local_model_path, gguf_weights_map)
             )
-
+            logger.debug(f"GGUFModelLoader: weights loaded, elapsed={time.perf_counter() - tic:.2f}s")
             for _, module in model.named_modules():
                 quant_method = getattr(module, "quant_method", None)
                 if quant_method is not None:
+                    quant_modules_count += 1
                     with device_loading_context(module, target_device):
                         quant_method.process_weights_after_loading(module)
+            if quant_modules_count > 0:
+                logger.debug(f"GGUFModelLoader: quantization post-processing complete, modules={quant_modules_count}, elapsed={time.perf_counter() - tic:.2f}s")
         return model
 
 
@@ -1557,6 +1567,9 @@ class RemoteModelLoader(BaseModelLoader):
     def _load_model_from_remote_kv(
         self, model: nn.Module, model_config: ModelConfig, client
     ):
+        logger.debug(f"RemoteKV: starting weight loading from KV store")
+        tic = time.perf_counter()
+        
         for _, module in model.named_modules():
             quant_method = getattr(module, "quant_method", None)
             if quant_method is not None:
@@ -1584,6 +1597,7 @@ class RemoteModelLoader(BaseModelLoader):
         if state_dict:
             raise ValueError(f"Missing keys {tuple(state_dict)} in loaded state!")
 
+        logger.debug(f"RemoteKV: loaded weights, elapsed={time.perf_counter() - tic:.2f}s")
         post_load_weights(model, model_config)
 
     def _load_model_from_remote_fs(
@@ -1592,11 +1606,15 @@ class RemoteModelLoader(BaseModelLoader):
 
         target_device = torch.device(device_config.device)
         with set_default_torch_dtype(model_config.dtype):
+            tic = time.perf_counter()
+            logger.debug(f"RemoteFS: loading weights into device begin.")
             model.load_weights(self._get_weights_iterator_fs(client))
+            logger.debug(f"RemoteFS: loading weights into device end. elapsed={time.perf_counter() - tic:.2f}s")
 
             for _, module in model.named_modules():
                 quant_method = getattr(module, "quant_method", None)
                 if quant_method is not None:
+                    quant_modules_count += 1
                     # When quant methods need to process weights after loading
                     # (for repacking, quantizing, etc), they expect parameters
                     # to be on the global target device. This scope is for the
@@ -1604,6 +1622,8 @@ class RemoteModelLoader(BaseModelLoader):
                     # parameters onto device for processing and back off after.
                     with device_loading_context(module, target_device):
                         quant_method.process_weights_after_loading(module)
+            if quant_modules_count > 0:
+                logger.debug(f"RemoteFS: quantization post-processing complete, modules={quant_modules_count}, elapsed={time.perf_counter() - tic:.2f}s")
 
     def load_model(
         self,
@@ -1658,11 +1678,15 @@ def load_model_with_cpu_quantization(
         )
 
         if not isinstance(self, DummyModelLoader):
+            tic = time.perf_counter()
+            logger.debug(f"CPU quantization: loading weights into device begin.")
             model.load_weights(self._get_all_weights(model_config, model))
+            logger.debug(f"CPU quantization: loading weights into device end. elapsed={time.perf_counter() - tic:.2f}s")
 
         for _, module in model.named_modules():
             quant_method = getattr(module, "quant_method", None)
             if quant_method is not None:
+                quant_modules_count += 1
                 # When quant methods need to process weights after loading
                 # (for repacking, quantizing, etc), they expect parameters
                 # to be on the global target device. This scope is for the
@@ -1670,8 +1694,13 @@ def load_model_with_cpu_quantization(
                 # parameters onto device for processing and back off after.
                 with device_loading_context(module, target_device):
                     quant_method.process_weights_after_loading(module)
+        if quant_modules_count > 0:
+            elapsed = time.perf_counter() - tic
+            logger.debug(f"CPU quantization: quantization processing complete, modules={quant_modules_count}, elapsed={elapsed:.2f}s")
 
+        tic = time.perf_counter()
         model.to(target_device)
+        logger.debug(f"CPU quantization: model moved to device={target_device}, elapsed={time.perf_counter() - tic:.2f}s")
 
     return model.eval()
 

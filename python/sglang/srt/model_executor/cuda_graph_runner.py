@@ -490,7 +490,7 @@ class CudaGraphRunner:
 
                     compile_enabled = bs in self.compile_bs
                     if compile_enabled:
-                        logger.info(f"Capturing CUDA graph batch_size={bs} with torch.compile enabled")
+                        logger.debug(f"Capturing CUDA graph batch_size={bs} with torch.compile enabled")
                     
                     with patch_model(
                         self.model_runner.model,
@@ -509,8 +509,7 @@ class CudaGraphRunner:
                     save_gemlite_cache()
                     
                     if compile_enabled:
-                        elapsed = time.perf_counter() - tic
-                        logger.info(f"Captured CUDA graph batch_size={bs}, compile={compile_enabled}, elapsed={elapsed:.2f} s")
+                        logger.debug(f"Captured CUDA graph batch_size={bs}, compile={compile_enabled}, elapsed={time.perf_counter() - tic:.2f} s")
 
         if self.enable_profile_cuda_graph:
             log_message = (
